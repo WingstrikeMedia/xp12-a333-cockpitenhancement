@@ -1,8 +1,11 @@
 from pathlib import Path
 from PIL import Image, ImageEnhance, ImageFilter
+from basicsr.archs.rrdbnet_arch import RRDBNet
+from realesrgan import RealESRGANer
+import cv2
+import numpy as np
 import subprocess
-import sys
-import io
+import torch
 
 ROOT = Path(".")
 WORK = Path("texture-work")
@@ -14,7 +17,7 @@ for folder in (SRC, PNG, AI, OUT):
     folder.mkdir(parents=True, exist_ok=True)
 
 texconv = Path("tools/texconv.exe")
-upscaler = Path("tools/realesrgan-ncnn-vulkan.exe")
+model_path = Path("tools/RealESRGAN_x4plus.pth")
 if not texconv.exists():
     raise SystemExit("tools/texconv.exe is missing")
 
@@ -65,26 +68,22 @@ for dds in dds_files:
     rgb_input = PNG / (dds.stem + "_rgb.png")
     ai_output = AI / (dds.stem + "_ai.png")
     rgba.convert("RGB").save(rgb_input, format="PNG")
-    restored_rgb = None
-    if upscaler.exists():
-        try:
-            run([str(upscaler), "-i", str(rgb_input), "-o", str(ai_output),
-                 "-m", str(Path("tools/models")), "-n", "realesrgan-x4plus",
-                 "-s", "4", "-t", "256"])
-            if ai_output.exists():
-                with Image.open(ai_output) as restored:
-                    restored.load()
-                    restored_rgb = restored.convert("RGB")
-        except subprocess.CalledProcessError as exc:
-            print(f"WARNING: Real-ESRGAN failed for {dds.name} (likely no Vulkan device: {exc.returncode}); using high-quality resize fallback.", flush=True)
-
-    if restored_rgb is None:
-        # GitHub-hosted runners do not always expose a Vulkan device. Keep the
-        # workflow productive with a deterministic high-quality resize fallback.
-        restored_rgb = rgba.convert("RGB").resize(target_size, Image.Resampling.LANCZOS)
-    else:
-        # Downsample the 4x AI reconstruction to 4K on the longest edge.
-        restored_rgb = restored_rgb.resize(target_size, Image.Resampling.LANCZOS)
+    if not model_path.exists():
+        raise SystemExit(f"CPU Real-ESRGAN model is missing: {model_path}")
+    # PyTorch CPU inference works on GitHub-hosted runners without Vulkan/GPU.
+    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64,
+                    num_block=23, num_grow_ch=32, scale=4)
+    upsampler = RealESRGANer(
+        scale=4, model_path=str(model_path), model=model,
+        tile=256, tile_pad=10, pre_pad=0, half=False,
+        device=torch.device("cpu"))
+    bgr = cv2.imread(str(rgb_input), cv2.IMREAD_COLOR)
+    if bgr is None:
+        raise SystemExit(f"Could not read RGB input image {rgb_input}")
+    print(f"Running CPU Real-ESRGAN for {dds.name}; this may take several minutes.", flush=True)
+    enhanced_bgr, _ = upsampler.enhance(bgr, outscale=4)
+    enhanced_rgb = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2RGB)
+    restored_rgb = Image.fromarray(enhanced_rgb).resize(target_size, Image.Resampling.LANCZOS)
 
     restored = ImageEnhance.Contrast(restored_rgb).enhance(1.025)
     restored = restored.filter(ImageFilter.UnsharpMask(radius=0.7, percent=18, threshold=5))
@@ -101,4 +100,4 @@ for dds in dds_files:
     with Image.open(processed) as verify:
         print(f"Done {dds.name}: {width}x{height} -> {verify.width}x{verify.height}; DDS {dds.stat().st_size} bytes", flush=True)
 
-print(f"Successfully AI-enhanced and upscaled {len(dds_files)} cockpit DDS textures.")
+print(f"Successfully CPU AI-enhanced and upscaled {len(dds_files)} cockpit DDS textures.")
