@@ -76,7 +76,7 @@ jobs:
           if (-not (Test-Path "tools\texconv.exe") -or (Get-Item "tools\texconv.exe").Length -lt 100000) {
             throw "texconv.exe is missing or unexpectedly small."
           }
-          & "tools\texconv.exe" -?
+          & "tools\texconv.exe" --help
           if ($LASTEXITCODE -ne 0) { throw "texconv.exe failed its startup check." }
 
       - name: Download Real-ESRGAN portable Windows build
