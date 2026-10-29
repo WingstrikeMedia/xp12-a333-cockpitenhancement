@@ -50,6 +50,7 @@ jobs:
           if (-not $exe) { throw "texconv.exe was not found inside downloaded release archive $($asset.name)" }
           Copy-Item $exe.FullName "tools\texconv.exe" -Force
           if ((Get-Item "tools\texconv.exe").Length -lt 100000) { throw "texconv.exe download looks incomplete" }
+          Write-Host "Installed texconv from $($asset.name)"
 
       - name: Download Real-ESRGAN AI upscaler
         shell: pwsh
@@ -63,24 +64,31 @@ jobs:
           if (-not $asset) {
             throw ("No Windows Real-ESRGAN ZIP found in release " + $release.tag_name + ". Assets: " + (($release.assets | ForEach-Object name) -join ", "))
           }
+          Write-Host "Using Real-ESRGAN release $($release.tag_name), asset $($asset.name)"
           $dir = Join-Path "$env:RUNNER_TEMP" "realesrgan"
-          New-Item -ItemType Directory -Force -Path $dir, "tools" | Out-Null
+          $expanded = Join-Path $dir "expanded"
+          New-Item -ItemType Directory -Force -Path $dir, $expanded, "tools", "tools\models" | Out-Null
           $zip = Join-Path $dir $asset.name
           Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath (Join-Path $dir "expanded") -Force
-          $exe = Get-ChildItem (Join-Path $dir "expanded") -Filter "realesrgan-ncnn-vulkan.exe" -Recurse | Select-Object -First 1
-          if (-not $exe) { throw "realesrgan-ncnn-vulkan.exe was not found inside $($asset.name)" }
-          Copy-Item $exe.FullName "tools\realesrgan-ncnn-vulkan.exe" -Force
-          $models = Get-ChildItem (Join-Path $dir "expanded") -Directory -Recurse | Where-Object { $_.Name -eq "models" } | Select-Object -First 1
-          if (-not $models) { throw "Real-ESRGAN models folder was not found in release archive" }
-          Copy-Item $models.FullName "tools\models" -Recurse -Force
-          if (-not (Test-Path "tools\models\realesrgan-x4plus.param")) {
-            $modelFile = Get-ChildItem "tools\models" -Filter "realesrgan-x4plus.param" -Recurse | Select-Object -First 1
-            if (-not $modelFile) { throw "realesrgan-x4plus model is missing from the release" }
-            $modelDir = Split-Path $modelFile.FullName
-            Copy-Item (Join-Path $modelDir "*") "tools\models" -Recurse -Force
+          Expand-Archive -Path $zip -DestinationPath $expanded -Force
+          $exe = Get-ChildItem $expanded -Filter "realesrgan-ncnn-vulkan.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "realesrgan-ncnn-vulkan.exe was not found. Archive contents: $((Get-ChildItem $expanded -Recurse | ForEach-Object FullName) -join '; ')" }
+          # Keep adjacent runtime files alongside the executable, not just the EXE.
+          Copy-Item (Join-Path $exe.DirectoryName "*") "tools" -Recurse -Force
+          $models = Get-ChildItem $expanded -Directory -Recurse | Where-Object { $_.Name -eq "models" } | Select-Object -First 1
+          if (-not $models) { throw "Real-ESRGAN models folder was not found. Archive contents: $((Get-ChildItem $expanded -Recurse | ForEach-Object FullName) -join '; ')" }
+          Copy-Item (Join-Path $models.FullName "*") "tools\models" -Recurse -Force
+          $modelParam = Get-ChildItem "tools\models" -Filter "realesrgan-x4plus.param" -Recurse | Select-Object -First 1
+          if (-not $modelParam) { throw "realesrgan-x4plus.param is missing. Installed models: $((Get-ChildItem tools\models -Recurse | ForEach-Object FullName) -join '; ')" }
+          $modelBin = Join-Path $modelParam.DirectoryName "realesrgan-x4plus.bin"
+          if (-not (Test-Path $modelBin)) { throw "Matching realesrgan-x4plus.bin is missing beside $($modelParam.FullName)" }
+          # Normalize any nested model folder to the path the executable expects.
+          if ($modelParam.DirectoryName -ne (Resolve-Path "tools\models").Path) {
+            Copy-Item (Join-Path $modelParam.DirectoryName "*") "tools\models" -Force
           }
           if ((Get-Item "tools\realesrgan-ncnn-vulkan.exe").Length -lt 100000) { throw "Real-ESRGAN executable download looks incomplete" }
+          Write-Host "Real-ESRGAN executable and x4plus model installed successfully."
+          Get-ChildItem tools -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
 
       - name: Enhance DDS textures
         run: python scripts/enhance_cockpit_textures.py
@@ -88,6 +96,7 @@ jobs:
       - name: Commit enhanced DDS textures to the repository
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- "int*.dds"
