@@ -29,24 +29,42 @@ jobs:
       - name: Install image processing dependency
         run: python -m pip install --upgrade Pillow
 
-      - name: Download DirectXTex converter
+      - name: Install DirectXTex converter
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/microsoft/DirectXTex/releases/latest" -Headers @{ "Accept" = "application/vnd.github+json"; "User-Agent" = "WVA-cockpit-texture-workflow" }
-          $asset = $release.assets | Where-Object { $_.name -match "Desktop_2022_Win10.*\.zip$" } | Select-Object -First 1
-          if (-not $asset) { $asset = $release.assets | Where-Object { $_.name -match "Desktop.*Win10.*\.zip$" } | Select-Object -First 1 }
-          if (-not $asset) { throw ("No Windows desktop DirectXTex ZIP found. Assets: " + (($release.assets | ForEach-Object name) -join ", ")) }
-          $dir = Join-Path "$env:RUNNER_TEMP" "directxtex"
-          New-Item -ItemType Directory -Force -Path $dir, "tools" | Out-Null
-          $zip = Join-Path $dir $asset.name
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath (Join-Path $dir "expanded") -Force
-          $exe = Get-ChildItem (Join-Path $dir "expanded") -Filter "texconv.exe" -Recurse | Select-Object -First 1
-          if (-not $exe) { throw "texconv.exe missing from DirectXTex archive $($asset.name)" }
-          Copy-Item $exe.FullName "tools\texconv.exe" -Force
-          if ((Get-Item "tools\texconv.exe").Length -lt 100000) { throw "texconv.exe download is incomplete" }
-          Write-Host "DirectXTex installed from $($asset.name)"
+          New-Item -ItemType Directory -Force -Path "tools", "$env:RUNNER_TEMP\directxtex" | Out-Null
+          $installed = $false
+          $headers = @{ "Accept" = "application/vnd.github+json"; "User-Agent" = "WVA-cockpit-texture-workflow" }
+          try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/microsoft/DirectXTex/releases/latest" -Headers $headers
+            foreach ($asset in @($release.assets | Where-Object { $_.name -match "\.zip$" })) {
+              try {
+                $zip = Join-Path "$env:RUNNER_TEMP\directxtex" $asset.name
+                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
+                $dest = Join-Path "$env:RUNNER_TEMP\directxtex" ([IO.Path]::GetFileNameWithoutExtension($asset.name))
+                Expand-Archive -Path $zip -DestinationPath $dest -Force
+                $exe = Get-ChildItem $dest -Filter "texconv.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($exe) {
+                  Copy-Item $exe.FullName "tools\texconv.exe" -Force
+                  Write-Host "Found texconv.exe in $($asset.name)"
+                  $installed = $true
+                  break
+                }
+                Write-Host "No texconv.exe in $($asset.name); trying next asset."
+              } catch {
+                Write-Host "Skipping asset $($asset.name): $($_.Exception.Message)"
+              }
+            }
+          } catch {
+            Write-Host "DirectXTex release lookup failed: $($_.Exception.Message)"
+          }
+          if (-not $installed) {
+            throw "Could not find texconv.exe in any DirectXTex release ZIP. See preceding asset diagnostics."
+          }
+          if ((Get-Item "tools\texconv.exe").Length -lt 100000) { throw "texconv.exe is missing or unexpectedly small." }
+          & "tools\texconv.exe" -?
+          if ($LASTEXITCODE -ne 0) { throw "texconv.exe failed its startup check." }
 
       - name: Download Real-ESRGAN portable Windows build
         shell: pwsh
