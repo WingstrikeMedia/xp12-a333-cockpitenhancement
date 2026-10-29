@@ -51,6 +51,37 @@ jobs:
           Copy-Item $exe.FullName "tools\texconv.exe" -Force
           if ((Get-Item "tools\texconv.exe").Length -lt 100000) { throw "texconv.exe download looks incomplete" }
 
+      - name: Download Real-ESRGAN AI upscaler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/xinntao/Real-ESRGAN-ncnn-vulkan/releases/latest" -Headers @{ "Accept" = "application/vnd.github+json"; "User-Agent" = "WVA-cockpit-texture-workflow" }
+          $asset = $release.assets | Where-Object { $_.name -match "windows.*\.zip$" } | Select-Object -First 1
+          if (-not $asset) {
+            $asset = $release.assets | Where-Object { $_.name -match "ncnn-vulkan.*\.zip$" } | Select-Object -First 1
+          }
+          if (-not $asset) {
+            throw ("No Windows Real-ESRGAN ZIP found in release " + $release.tag_name + ". Assets: " + (($release.assets | ForEach-Object name) -join ", "))
+          }
+          $dir = Join-Path "$env:RUNNER_TEMP" "realesrgan"
+          New-Item -ItemType Directory -Force -Path $dir, "tools" | Out-Null
+          $zip = Join-Path $dir $asset.name
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath (Join-Path $dir "expanded") -Force
+          $exe = Get-ChildItem (Join-Path $dir "expanded") -Filter "realesrgan-ncnn-vulkan.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "realesrgan-ncnn-vulkan.exe was not found inside $($asset.name)" }
+          Copy-Item $exe.FullName "tools\realesrgan-ncnn-vulkan.exe" -Force
+          $models = Get-ChildItem (Join-Path $dir "expanded") -Directory -Recurse | Where-Object { $_.Name -eq "models" } | Select-Object -First 1
+          if (-not $models) { throw "Real-ESRGAN models folder was not found in release archive" }
+          Copy-Item $models.FullName "tools\models" -Recurse -Force
+          if (-not (Test-Path "tools\models\realesrgan-x4plus.param")) {
+            $modelFile = Get-ChildItem "tools\models" -Filter "realesrgan-x4plus.param" -Recurse | Select-Object -First 1
+            if (-not $modelFile) { throw "realesrgan-x4plus model is missing from the release" }
+            $modelDir = Split-Path $modelFile.FullName
+            Copy-Item (Join-Path $modelDir "*") "tools\models" -Recurse -Force
+          }
+          if ((Get-Item "tools\realesrgan-ncnn-vulkan.exe").Length -lt 100000) { throw "Real-ESRGAN executable download looks incomplete" }
+
       - name: Enhance DDS textures
         run: python scripts/enhance_cockpit_textures.py
 
