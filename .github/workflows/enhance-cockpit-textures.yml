@@ -24,10 +24,24 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.10"
 
-      - name: Install image processing dependency
-        run: python -m pip install --upgrade Pillow
+      - name: Install CPU Real-ESRGAN and image dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "numpy<2" Pillow opencv-python-headless realesrgan==0.3.0 basicsr==1.4.2
+
+      - name: Download Real-ESRGAN x4plus model
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "tools" | Out-Null
+          $url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/RealESRGAN_x4plus.pth"
+          Invoke-WebRequest -Uri $url -OutFile "tools\RealESRGAN_x4plus.pth"
+          if ((Get-Item "tools\RealESRGAN_x4plus.pth").Length -lt 50000000) { throw "Real-ESRGAN model download is unexpectedly small." }
+          Write-Host "Downloaded official Real-ESRGAN x4plus model for CPU inference."
 
       - name: Install DirectXTex converter
         shell: pwsh
@@ -78,33 +92,6 @@ jobs:
           }
           & "tools\texconv.exe" --help
           if ($LASTEXITCODE -ne 0) { throw "texconv.exe failed its startup check." }
-
-      - name: Download Real-ESRGAN portable Windows build
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          # Use the official, known Windows asset. The ncnn-vulkan project does not
-          # consistently expose a latest-release asset matching a dynamic filename.
-          $url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip"
-          $dir = Join-Path "$env:RUNNER_TEMP" "realesrgan"
-          $expanded = Join-Path $dir "expanded"
-          New-Item -ItemType Directory -Force -Path $dir, $expanded, "tools" | Out-Null
-          $zip = Join-Path $dir "realesrgan-windows.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip
-          if ((Get-Item $zip).Length -lt 1000000) { throw "Real-ESRGAN archive download is unexpectedly small" }
-          Expand-Archive -Path $zip -DestinationPath $expanded -Force
-          $exe = Get-ChildItem $expanded -Filter "realesrgan-ncnn-vulkan.exe" -Recurse | Select-Object -First 1
-          if (-not $exe) { throw "realesrgan-ncnn-vulkan.exe missing. Archive contents: $((Get-ChildItem $expanded -Recurse | ForEach-Object FullName) -join '; ')" }
-          # The official portable archive contains its own models folder and runtime files.
-          Copy-Item (Join-Path $exe.DirectoryName "*") "tools" -Recurse -Force
-          if (-not (Test-Path "tools\models\realesrgan-x4plus.param")) {
-            $model = Get-ChildItem "tools" -Filter "realesrgan-x4plus.param" -Recurse | Select-Object -First 1
-            if (-not $model) { throw "realesrgan-x4plus model missing from portable archive" }
-            New-Item -ItemType Directory -Force -Path "tools\models" | Out-Null
-            Copy-Item (Join-Path $model.DirectoryName "*") "tools\models" -Force
-          }
-          if (-not (Test-Path "tools\models\realesrgan-x4plus.bin")) { throw "realesrgan-x4plus.bin missing from portable archive" }
-          Write-Host "Real-ESRGAN portable Windows build installed."
 
       - name: Enhance DDS textures
         run: python scripts/enhance_cockpit_textures.py
