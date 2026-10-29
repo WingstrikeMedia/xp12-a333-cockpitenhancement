@@ -68,7 +68,8 @@ for dds in dds_files:
     ai_output = AI / (dds.stem + "_ai.png")
     rgba.convert("RGB").save(rgb_input, format="PNG")
     run([str(upscaler), "-i", str(rgb_input), "-o", str(ai_output),
-         "-n", "realesrgan-x4plus", "-s", "4", "-t", "256"])
+         "-m", str(Path("tools/models")), "-n", "realesrgan-x4plus",
+         "-s", "4", "-t", "256"])
     if not ai_output.exists():
         raise SystemExit(f"Real-ESRGAN did not produce {ai_output}")
 
