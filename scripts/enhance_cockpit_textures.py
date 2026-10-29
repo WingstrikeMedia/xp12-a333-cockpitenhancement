@@ -62,6 +62,6 @@ for dds in dds_files:
         raise SystemExit(f"texconv did not produce {generated}")
     # Replace source only after a successful round-trip conversion.
     dds.write_bytes(generated.read_bytes())
-    print(f"Enhanced/upscaled {dds.name}: {dds.stat().st_size} bytes; output dimensions {Image.open(PNG / (dds.stem + \"_enhanced.png\")).size}", flush=True)
+    print(f"Enhanced/upscaled {dds.name}: {dds.stat().st_size} bytes; output dimensions {rgb.size}", flush=True)
 
 print(f"Successfully processed {len(dds_files)} DDS textures.")
