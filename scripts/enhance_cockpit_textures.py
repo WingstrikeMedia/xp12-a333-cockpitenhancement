@@ -31,9 +31,21 @@ for dds in dds_files:
 
     with Image.open(png) as im:
         im.load()
-        # Conservative clarity pass: modest local detail and tonal separation,
-        # without recoloring the cockpit or changing its dimensions.
+        # Upscale to 4K on the longest edge, preserving aspect ratio.
+        # Lanczos provides a high-quality resampling baseline; the sharpening
+        # pass below restores some edge definition after enlargement.
         enhanced = im.convert("RGBA") if "A" in im.getbands() else im.convert("RGB")
+        width, height = enhanced.size
+        longest = max(width, height)
+        if longest < 4096:
+            new_size = (
+                max(1, round(width * 4096 / longest)),
+                max(1, round(height * 4096 / longest)),
+            )
+            print(f"Upscaling {dds.name}: {width}x{height} -> {new_size[0]}x{new_size[1]}", flush=True)
+            enhanced = enhanced.resize(new_size, Image.Resampling.LANCZOS)
+        else:
+            print(f"{dds.name} already meets/exceeds 4K: {width}x{height}", flush=True)
         alpha = enhanced.getchannel("A") if enhanced.mode == "RGBA" else None
         rgb = enhanced.convert("RGB")
         rgb = ImageEnhance.Contrast(rgb).enhance(1.06)
@@ -50,6 +62,6 @@ for dds in dds_files:
         raise SystemExit(f"texconv did not produce {generated}")
     # Replace source only after a successful round-trip conversion.
     dds.write_bytes(generated.read_bytes())
-    print(f"Enhanced {dds.name}: {source.stat().st_size} -> {dds.stat().st_size} bytes", flush=True)
+    print(f"Enhanced/upscaled {dds.name}: {dds.stat().st_size} bytes; output dimensions {Image.open(PNG / (dds.stem + \"_enhanced.png\")).size}", flush=True)
 
 print(f"Successfully processed {len(dds_files)} DDS textures.")
