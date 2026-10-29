@@ -12,7 +12,6 @@ permissions:
 
 jobs:
   enhance:
-    # The workflow's own output commit must not start a second processing pass.
     if: github.actor != 'github-actions[bot]'
     runs-on: windows-latest
     steps:
@@ -30,65 +29,51 @@ jobs:
       - name: Install image processing dependency
         run: python -m pip install --upgrade Pillow
 
-      - name: Download Microsoft's DirectXTex converter
+      - name: Download DirectXTex converter
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $release = Invoke-RestMethod -Uri "https://api.github.com/repos/microsoft/DirectXTex/releases/latest" -Headers @{ "Accept" = "application/vnd.github+json"; "User-Agent" = "WVA-cockpit-texture-workflow" }
           $asset = $release.assets | Where-Object { $_.name -match "Desktop_2022_Win10.*\.zip$" } | Select-Object -First 1
-          if (-not $asset) {
-            $asset = $release.assets | Where-Object { $_.name -match "Desktop.*Win10.*\.zip$" } | Select-Object -First 1
-          }
-          if (-not $asset) {
-            throw ("No Windows desktop ZIP containing texconv was found in DirectXTex release " + $release.tag_name + ". Assets: " + (($release.assets | ForEach-Object name) -join ", "))
-          }
-          New-Item -ItemType Directory -Force -Path tools, "$env:RUNNER_TEMP\directxtex" | Out-Null
-          $zip = Join-Path "$env:RUNNER_TEMP\directxtex" $asset.name
+          if (-not $asset) { $asset = $release.assets | Where-Object { $_.name -match "Desktop.*Win10.*\.zip$" } | Select-Object -First 1 }
+          if (-not $asset) { throw ("No Windows desktop DirectXTex ZIP found. Assets: " + (($release.assets | ForEach-Object name) -join ", ")) }
+          $dir = Join-Path "$env:RUNNER_TEMP" "directxtex"
+          New-Item -ItemType Directory -Force -Path $dir, "tools" | Out-Null
+          $zip = Join-Path $dir $asset.name
           Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\directxtex\expanded" -Force
-          $exe = Get-ChildItem "$env:RUNNER_TEMP\directxtex\expanded" -Filter "texconv.exe" -Recurse | Select-Object -First 1
-          if (-not $exe) { throw "texconv.exe was not found inside downloaded release archive $($asset.name)" }
+          Expand-Archive -Path $zip -DestinationPath (Join-Path $dir "expanded") -Force
+          $exe = Get-ChildItem (Join-Path $dir "expanded") -Filter "texconv.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "texconv.exe missing from DirectXTex archive $($asset.name)" }
           Copy-Item $exe.FullName "tools\texconv.exe" -Force
-          if ((Get-Item "tools\texconv.exe").Length -lt 100000) { throw "texconv.exe download looks incomplete" }
-          Write-Host "Installed texconv from $($asset.name)"
+          if ((Get-Item "tools\texconv.exe").Length -lt 100000) { throw "texconv.exe download is incomplete" }
+          Write-Host "DirectXTex installed from $($asset.name)"
 
-      - name: Download Real-ESRGAN AI upscaler
+      - name: Download Real-ESRGAN portable Windows build
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/xinntao/Real-ESRGAN-ncnn-vulkan/releases/latest" -Headers @{ "Accept" = "application/vnd.github+json"; "User-Agent" = "WVA-cockpit-texture-workflow" }
-          $asset = $release.assets | Where-Object { $_.name -match "windows.*\.zip$" } | Select-Object -First 1
-          if (-not $asset) {
-            $asset = $release.assets | Where-Object { $_.name -match "ncnn-vulkan.*\.zip$" } | Select-Object -First 1
-          }
-          if (-not $asset) {
-            throw ("No Windows Real-ESRGAN ZIP found in release " + $release.tag_name + ". Assets: " + (($release.assets | ForEach-Object name) -join ", "))
-          }
-          Write-Host "Using Real-ESRGAN release $($release.tag_name), asset $($asset.name)"
+          # Use the official, known Windows asset. The ncnn-vulkan project does not
+          # consistently expose a latest-release asset matching a dynamic filename.
+          $url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip"
           $dir = Join-Path "$env:RUNNER_TEMP" "realesrgan"
           $expanded = Join-Path $dir "expanded"
-          New-Item -ItemType Directory -Force -Path $dir, $expanded, "tools", "tools\models" | Out-Null
-          $zip = Join-Path $dir $asset.name
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
+          New-Item -ItemType Directory -Force -Path $dir, $expanded, "tools" | Out-Null
+          $zip = Join-Path $dir "realesrgan-windows.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          if ((Get-Item $zip).Length -lt 1000000) { throw "Real-ESRGAN archive download is unexpectedly small" }
           Expand-Archive -Path $zip -DestinationPath $expanded -Force
           $exe = Get-ChildItem $expanded -Filter "realesrgan-ncnn-vulkan.exe" -Recurse | Select-Object -First 1
-          if (-not $exe) { throw "realesrgan-ncnn-vulkan.exe was not found. Archive contents: $((Get-ChildItem $expanded -Recurse | ForEach-Object FullName) -join '; ')" }
-          # Keep adjacent runtime files alongside the executable, not just the EXE.
+          if (-not $exe) { throw "realesrgan-ncnn-vulkan.exe missing. Archive contents: $((Get-ChildItem $expanded -Recurse | ForEach-Object FullName) -join '; ')" }
+          # The official portable archive contains its own models folder and runtime files.
           Copy-Item (Join-Path $exe.DirectoryName "*") "tools" -Recurse -Force
-          $models = Get-ChildItem $expanded -Directory -Recurse | Where-Object { $_.Name -eq "models" } | Select-Object -First 1
-          if (-not $models) { throw "Real-ESRGAN models folder was not found. Archive contents: $((Get-ChildItem $expanded -Recurse | ForEach-Object FullName) -join '; ')" }
-          Copy-Item (Join-Path $models.FullName "*") "tools\models" -Recurse -Force
-          $modelParam = Get-ChildItem "tools\models" -Filter "realesrgan-x4plus.param" -Recurse | Select-Object -First 1
-          if (-not $modelParam) { throw "realesrgan-x4plus.param is missing. Installed models: $((Get-ChildItem tools\models -Recurse | ForEach-Object FullName) -join '; ')" }
-          $modelBin = Join-Path $modelParam.DirectoryName "realesrgan-x4plus.bin"
-          if (-not (Test-Path $modelBin)) { throw "Matching realesrgan-x4plus.bin is missing beside $($modelParam.FullName)" }
-          # Normalize any nested model folder to the path the executable expects.
-          if ($modelParam.DirectoryName -ne (Resolve-Path "tools\models").Path) {
-            Copy-Item (Join-Path $modelParam.DirectoryName "*") "tools\models" -Force
+          if (-not (Test-Path "tools\models\realesrgan-x4plus.param")) {
+            $model = Get-ChildItem "tools" -Filter "realesrgan-x4plus.param" -Recurse | Select-Object -First 1
+            if (-not $model) { throw "realesrgan-x4plus model missing from portable archive" }
+            New-Item -ItemType Directory -Force -Path "tools\models" | Out-Null
+            Copy-Item (Join-Path $model.DirectoryName "*") "tools\models" -Force
           }
-          if ((Get-Item "tools\realesrgan-ncnn-vulkan.exe").Length -lt 100000) { throw "Real-ESRGAN executable download looks incomplete" }
-          Write-Host "Real-ESRGAN executable and x4plus model installed successfully."
-          Get-ChildItem tools -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+          if (-not (Test-Path "tools\models\realesrgan-x4plus.bin")) { throw "realesrgan-x4plus.bin missing from portable archive" }
+          Write-Host "Real-ESRGAN portable Windows build installed."
 
       - name: Enhance DDS textures
         run: python scripts/enhance_cockpit_textures.py
