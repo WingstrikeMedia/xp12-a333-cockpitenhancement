@@ -38,7 +38,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path "tools" | Out-Null
-          $url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/RealESRGAN_x4plus.pth"
+          $url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
           Invoke-WebRequest -Uri $url -OutFile "tools\RealESRGAN_x4plus.pth"
           if ((Get-Item "tools\RealESRGAN_x4plus.pth").Length -lt 50000000) { throw "Real-ESRGAN model download is unexpectedly small." }
           Write-Host "Downloaded official Real-ESRGAN x4plus model for CPU inference."
