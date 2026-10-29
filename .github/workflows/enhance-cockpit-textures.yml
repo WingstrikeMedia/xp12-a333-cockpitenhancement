@@ -1,0 +1,55 @@
+name: Enhance A330 cockpit textures
+
+on:
+  push:
+    paths:
+      - ".github/workflows/enhance-cockpit-textures.yml"
+      - "scripts/enhance_cockpit_textures.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  enhance:
+    # The workflow's own output commit must not start a second processing pass.
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install image processing dependency
+        run: python -m pip install --upgrade Pillow
+
+      - name: Download Microsoft's DirectXTex converter
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tools | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/microsoft/DirectXTex/releases/latest/download/texconv.exe" -OutFile "tools/texconv.exe"
+          if ((Get-Item "tools/texconv.exe").Length -lt 100000) { throw "texconv download looks incomplete" }
+
+      - name: Enhance DDS textures
+        run: python scripts/enhance_cockpit_textures.py
+
+      - name: Commit enhanced DDS textures to the repository
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "int*.dds"
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "No texture changes to commit."
+            exit 0
+          }
+          git commit -m "Enhance A330 cockpit DDS textures [skip ci]"
+          git push origin HEAD:main
