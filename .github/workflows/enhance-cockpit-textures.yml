@@ -33,9 +33,23 @@ jobs:
       - name: Download Microsoft's DirectXTex converter
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path tools | Out-Null
-          Invoke-WebRequest -Uri "https://github.com/microsoft/DirectXTex/releases/latest/download/texconv.exe" -OutFile "tools/texconv.exe"
-          if ((Get-Item "tools/texconv.exe").Length -lt 100000) { throw "texconv download looks incomplete" }
+          $ErrorActionPreference = "Stop"
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/microsoft/DirectXTex/releases/latest" -Headers @{ "Accept" = "application/vnd.github+json"; "User-Agent" = "WVA-cockpit-texture-workflow" }
+          $asset = $release.assets | Where-Object { $_.name -match "Desktop_2022_Win10.*\.zip$" } | Select-Object -First 1
+          if (-not $asset) {
+            $asset = $release.assets | Where-Object { $_.name -match "Desktop.*Win10.*\.zip$" } | Select-Object -First 1
+          }
+          if (-not $asset) {
+            throw ("No Windows desktop ZIP containing texconv was found in DirectXTex release " + $release.tag_name + ". Assets: " + (($release.assets | ForEach-Object name) -join ", "))
+          }
+          New-Item -ItemType Directory -Force -Path tools, "$env:RUNNER_TEMP\directxtex" | Out-Null
+          $zip = Join-Path "$env:RUNNER_TEMP\directxtex" $asset.name
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\directxtex\expanded" -Force
+          $exe = Get-ChildItem "$env:RUNNER_TEMP\directxtex\expanded" -Filter "texconv.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "texconv.exe was not found inside downloaded release archive $($asset.name)" }
+          Copy-Item $exe.FullName "tools\texconv.exe" -Force
+          if ((Get-Item "tools\texconv.exe").Length -lt 100000) { throw "texconv.exe download looks incomplete" }
 
       - name: Enhance DDS textures
         run: python scripts/enhance_cockpit_textures.py
