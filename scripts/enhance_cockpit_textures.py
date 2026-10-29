@@ -22,7 +22,7 @@ if not upscaler.exists():
 
 # The first upload commit is the untouched source set. Always upscale from
 # those originals, rather than repeatedly enlarging already-upscaled files.
-ORIGINAL_COMMIT = "e672b443031f9fe1dbe5edb22b06bc3915857b1c"
+ORIGINAL_COMMITS = ("e672b443031f9fe1dbe5edb22b06bc3915857b1c", "ef37c607fc53e441a6fc5f15f6c942f1e5f7e877", "9897decd68ddef2089629beb1f9106e18c3ac584")
 dds_files = sorted(ROOT.glob("int*.dds"))
 if not dds_files:
     raise SystemExit("No int*.dds cockpit textures found")
@@ -33,13 +33,18 @@ def run(args):
 
 for dds in dds_files:
     source = SRC / dds.name
-    result = subprocess.run(
-        ["git", "show", f"{ORIGINAL_COMMIT}:{dds.name}"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    if result.returncode == 0 and result.stdout:
-        source.write_bytes(result.stdout)
-        print(f"Using original repository texture for {dds.name}", flush=True)
+    original = None
+    for commit in ORIGINAL_COMMITS:
+        result = subprocess.run(
+            ["git", "show", f"{commit}:{dds.name}"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        if result.returncode == 0 and result.stdout:
+            original = result.stdout
+            print(f"Using original {dds.name} from {commit[:7]}", flush=True)
+            break
+    if original is not None:
+        source.write_bytes(original)
     else:
         source.write_bytes(dds.read_bytes())
         print(f"WARNING: original blob unavailable; using current {dds.name}", flush=True)
