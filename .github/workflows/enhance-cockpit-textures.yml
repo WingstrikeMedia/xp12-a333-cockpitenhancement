@@ -60,9 +60,22 @@ jobs:
             Write-Host "DirectXTex release lookup failed: $($_.Exception.Message)"
           }
           if (-not $installed) {
-            throw "Could not find texconv.exe in any DirectXTex release ZIP. See preceding asset diagnostics."
+            Write-Host "No release ZIP contained texconv.exe. Installing the official Microsoft WinGet package."
+            winget install --id Microsoft.DirectXTex.Texconv --exact --silent --accept-source-agreements --accept-package-agreements
+            if ($LASTEXITCODE -ne 0) { throw "WinGet failed to install Microsoft.DirectXTex.Texconv (exit $LASTEXITCODE)." }
+            $exe = Get-Command "texconv.exe" -ErrorAction SilentlyContinue
+            if ($exe) {
+              Copy-Item $exe.Source "tools\texconv.exe" -Force
+            } else {
+              $roots = @("$env:ProgramFiles", "$env:LOCALAPPDATA\Microsoft\WinGet\Packages")
+              $exe = Get-ChildItem $roots -Filter "texconv.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+              if (-not $exe) { throw "WinGet completed, but texconv.exe could not be found under the standard install roots." }
+              Copy-Item $exe.FullName "tools\texconv.exe" -Force
+            }
           }
-          if ((Get-Item "tools\texconv.exe").Length -lt 100000) { throw "texconv.exe is missing or unexpectedly small." }
+          if (-not (Test-Path "tools\texconv.exe") -or (Get-Item "tools\texconv.exe").Length -lt 100000) {
+            throw "texconv.exe is missing or unexpectedly small."
+          }
           & "tools\texconv.exe" -?
           if ($LASTEXITCODE -ne 0) { throw "texconv.exe failed its startup check." }
 
